@@ -1,0 +1,28 @@
+#version 450
+
+// 하나의 Workgroup에서 64개의 Invocation 실행
+layout(local_size_x = 64,
+       local_size_y = 1,
+       local_size_z = 1) in;
+
+// GPU가 읽고 쓸 Storage Buffer
+layout(std430, set = 0, binding = 0) buffer PixelBuffer {
+    float values[];
+} pixels;
+
+// 처리할 데이터 개수
+layout(push_constant) uniform Parameters {
+    uint elementCount;
+} params;
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+
+    // 실제 데이터 범위를 벗어나면 처리하지 않음
+    if (index >= params.elementCount) {
+        return;
+    }
+
+    // 0~255 입력을 0~1 범위로 정규화
+    pixels.values[index] /= 255.0;
+}
