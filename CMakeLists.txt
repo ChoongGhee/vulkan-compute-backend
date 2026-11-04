@@ -11,6 +11,7 @@ find_package(Vulkan REQUIRED)
 add_library(edge_vulkan STATIC
     src/vulkan/VulkanContext.cpp
     src/vulkan/VulkanBuffer.cpp
+    src/vulkan/VulkanCompute.cpp
 )
 
 target_include_directories(edge_vulkan PRIVATE

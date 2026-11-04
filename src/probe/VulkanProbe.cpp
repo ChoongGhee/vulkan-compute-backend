@@ -1,8 +1,11 @@
 #include "probe/VulkanProbe.h"
 #include "vulkan/VulkanContext.h"
 #include "vulkan/VulkanBuffer.h"
+#include "vulkan/VulkanCompute.h"
 
 #include <array>
+#include <cmath>
+#include <cstdint>
 #include <exception>
 #include <iostream>
 #include <stdexcept>
@@ -44,23 +47,42 @@ int runVulkanProbe() {
 
         // 3. Buffer에 데이터 기록
         buffer.upload(input.data(), sizeof(input));
+        std::cout << "[OK] Buffer uploaded\n";
 
-        // 4. Buffer에서 데이터 읽기
+        // 4. SPIR-V Shader와 Compute Pipeline 생성
+        vulkan::VulkanCompute compute(
+            context,
+            "build/shaders/normalize.comp.spv"
+        );
+
+        std::cout << "[OK] Compute Pipeline created\n";
+
+        // 5. GPU에서 Normalize 실행
+        compute.dispatch(
+            buffer,
+            static_cast<uint32_t>(input.size())
+        );
+
+        // 6. GPU 결과를 CPU로 가져오기
         buffer.download(output.data(), sizeof(output));
 
-        // 5. 결과 검증
-        if (input != output) {
-            throw std::runtime_error(
-                "Buffer data mismatch"
-            );
+        // 7. CPU 기준값과 비교
+        for (size_t i = 0; i < input.size(); ++i) {
+            const float expected = input[i] / 255.0f;
+            const float actual = output[i];
+
+            std::cout << "GPU[" << i << "] = "
+                      << actual
+                      << " | Expected = " << expected << '\n';
+
+            if (std::abs(actual - expected) > 1e-5f) {
+                throw std::runtime_error(
+                    "GPU normalize result mismatch"
+                );
+            }
         }
 
-        for (size_t i = 0; i < output.size(); ++i) {
-            std::cout << "Buffer[" << i << "] = "
-                      << output[i] << '\n';
-        }
-
-        std::cout << "[OK] Buffer write/read verified\n";
+        std::cout << "[OK] GPU normalize verified\n";
         return 0;
 
     } catch (const std::exception& e) {
@@ -69,4 +91,4 @@ int runVulkanProbe() {
     }
 }
 
-}
+} // namespcae edge::probe
