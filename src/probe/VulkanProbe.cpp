@@ -13,6 +13,10 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <algorithm>
+#include <chrono>
+#include <iomanip>
+
 
 namespace edge::probe {
 
@@ -98,6 +102,107 @@ void verifyNormalize(
         << " | Guard=OK\n";
 }
 
+using Clock = std::chrono::steady_clock;
+
+double elapsedUs(
+    Clock::time_point start,
+    Clock::time_point end
+) {
+    return std::chrono::duration<double, std::micro>(
+        end - start
+    ).count();
+}
+
+double median(std::vector<double> values) {
+    std::sort(values.begin(), values.end());
+    return values[values.size() / 2];
+}
+
+void benchmarkNormalize(
+    vulkan::VulkanContext& context,
+    vulkan::VulkanCompute& compute
+) {
+    constexpr uint32_t kElements = 1u << 20;
+    constexpr int kWarmup = 5;
+    constexpr int kSamples = 31;
+
+    std::vector<float> input(kElements);
+    std::vector<float> output(kElements);
+
+    for (uint32_t i = 0; i < kElements; ++i) {
+        input[i] = static_cast<float>(i % 256);
+    }
+
+    const VkDeviceSize bytes =
+        static_cast<VkDeviceSize>(input.size()) * sizeof(float);
+
+    // 측정 전에 메모리 할당
+    vulkan::VulkanBuffer buffer(
+        context,
+        bytes,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+    );
+
+    std::vector<double> uploadTimes;
+    std::vector<double> dispatchTimes;
+    std::vector<double> downloadTimes;
+    std::vector<double> totalTimes;
+
+    // Warmup을 먼저 수행하고 이후 측정값만 기록
+    for (int iteration = -kWarmup;
+         iteration < kSamples;
+         ++iteration) {
+
+        const auto t0 = Clock::now();
+
+        buffer.upload(input.data(), bytes);
+        const auto t1 = Clock::now();
+
+        compute.dispatch(buffer, kElements);
+        const auto t2 = Clock::now();
+
+        buffer.download(output.data(), bytes);
+        const auto t3 = Clock::now();
+
+        if (iteration >= 0) {
+            uploadTimes.push_back(elapsedUs(t0, t1));
+            dispatchTimes.push_back(elapsedUs(t1, t2));
+            downloadTimes.push_back(elapsedUs(t2, t3));
+            totalTimes.push_back(elapsedUs(t0, t3));
+        }
+    }
+
+    // 마지막 실행 결과의 정확성 확인
+    for (uint32_t i = 0; i < kElements; ++i) {
+        const float expected = input[i] / 255.0f;
+
+        if (!std::isfinite(output[i]) ||
+            std::abs(output[i] - expected) > 1e-5f) {
+            throw std::runtime_error(
+                "Benchmark result mismatch"
+            );
+        }
+    }
+
+    std::cout << std::fixed << std::setprecision(2);
+    std::cout << "\n[BENCHMARK] Elements: "
+              << kElements << '\n';
+
+    std::cout << "Upload:        "
+              << median(uploadTimes) << " us\n";
+
+    std::cout << "Dispatch+Wait: "
+              << median(dispatchTimes) << " us\n";
+
+    std::cout << "Download:      "
+              << median(downloadTimes) << " us\n";
+
+    std::cout << "End-to-end:    "
+              << median(totalTimes) << " us\n";
+
+    std::cout << "[OK] Benchmark verified\n";
+}
+
 } // namespace
 
 int runVulkanProbe() {
@@ -127,7 +232,9 @@ int runVulkanProbe() {
 
         std::cout
             << "[OK] All compute boundary tests passed\n";
-
+        
+        benchmarkNormalize(context, compute);
+        
         return 0;
 
     } catch (const std::exception& e) {
